@@ -16,6 +16,8 @@ package keycloak
 
 import (
 	"errors"
+	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -60,6 +62,66 @@ func (g *RealmGenerator) InitResources() error {
 			return errors.New("keycloak: could not get required actions of realm " + realm.Id + " in Keycloak")
 		}
 		g.Resources = append(g.Resources, g.createRequiredActionResources(requiredActions)...)
+
+		// Get authentication flows resources
+		authenticationFlows, err := kck.ListAuthenticationFlows(realm.Id)
+		if err != nil {
+			return errors.New("keycloak: could not get authentication flows of realm " + realm.Id + " in Keycloak")
+		}
+		g.Resources = append(g.Resources, g.createAuthenticationFlowResources(authenticationFlows)...)
+
+		// For each authentication flow, get subFlow, execution and execution config resources
+		for _, authenticationFlow := range authenticationFlows {
+			if authenticationFlow.BuiltIn {
+				continue
+			}
+			log.Println("##### FlowAlias: " + authenticationFlow.Alias)
+			authenticationSubFlowOrExecutions, err := kck.ListAuthenticationExecutions(realm.Id, authenticationFlow.Alias)
+			if err != nil {
+				return errors.New("keycloak: could not get authentication execution of authentication flow " + authenticationFlow.Alias + " of realm " + realm.Id + " in Keycloak")
+			}
+
+			var previous *keycloak.AuthenticationExecutionInfo
+			for _, authenticationSubFlowOrExecution := range authenticationSubFlowOrExecutions {
+				log.Printf("##### AuthenticationFlow: %v", authenticationSubFlowOrExecution.AuthenticationFlow)
+
+				switch authenticationSubFlowOrExecution.AuthenticationFlow {
+				case true:
+					authenticationSubFlow, err := kck.GetAuthenticationSubFlow(realm.Id, authenticationFlow.Alias, authenticationSubFlowOrExecution.FlowId)
+					if err != nil {
+						return fmt.Errorf("keycloak: could not get authentication subflow of realm "+realm.Id+" in Keycloak. err: %w", err)
+					}
+
+					g.Resources = append(g.Resources, g.createAuthenticationSubFlowResource(authenticationSubFlow, previous))
+				case false:
+					authenticationExecution, err := kck.GetAuthenticationExecution(realm.Id, authenticationFlow.Alias, authenticationSubFlowOrExecution.Id)
+					if err != nil {
+						return errors.New("keycloak: could not get authentication execution of realm " + realm.Id + " in Keycloak")
+					}
+
+					g.Resources = append(g.Resources, g.createAuthenticationExecutionResource(authenticationExecution, previous))
+
+					log.Println("##### config: " + authenticationExecution.AuthenticationConfig)
+					if authenticationSubFlowOrExecution.AuthenticationConfig != "" {
+						log.Println("##### config1: " + authenticationSubFlowOrExecution.AuthenticationConfig)
+						log.Println("##### config2: " + authenticationExecution.AuthenticationConfig)
+						authenticationExecutionConfig := &keycloak.AuthenticationExecutionConfig{
+							RealmId: realm.Id,
+							Id:      authenticationSubFlowOrExecution.AuthenticationConfig,
+						}
+						err := kck.GetAuthenticationExecutionConfig(authenticationExecutionConfig)
+						if err != nil {
+							return errors.New("keycloak: could not get authentication execution config of realm " + realm.Id + " in Keycloak")
+						}
+
+						log.Println("#### Added config")
+
+						g.Resources = append(g.Resources, g.createAuthenticationExecutionConfigResource(authenticationExecutionConfig))
+					}
+				}
+				previous = authenticationSubFlowOrExecution
+			}
+		}
 
 		// Get custom federations resources
 		// TODO: support kerberos user federation

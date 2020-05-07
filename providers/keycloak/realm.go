@@ -56,6 +56,89 @@ func (g RealmGenerator) createRequiredActionResources(requiredActions []*keycloa
 	return resources
 }
 
+func (g RealmGenerator) createAuthenticationFlowResources(authenticationFlows []*keycloak.AuthenticationFlow) []terraformutils.Resource {
+	var resources []terraformutils.Resource
+	for _, authenticationFlow := range authenticationFlows {
+		if authenticationFlow.BuiltIn {
+			continue
+		}
+		resources = append(resources, terraformutils.NewResource(
+			authenticationFlow.Id,
+			"authentication_flow_"+normalizeResourceName(authenticationFlow.RealmId)+"_"+normalizeResourceName(authenticationFlow.Alias),
+			"keycloak_authentication_flow",
+			"keycloak",
+			map[string]string{
+				"realm_id": authenticationFlow.RealmId,
+				"alias":    authenticationFlow.Alias,
+			},
+			[]string{},
+			map[string]interface{}{},
+		))
+	}
+	return resources
+}
+
+func (g RealmGenerator) createAuthenticationSubFlowResource(authenticationSubFlow *keycloak.AuthenticationSubFlow, previous *keycloak.AuthenticationExecutionInfo) terraformutils.Resource {
+	resource := terraformutils.NewResource(
+		authenticationSubFlow.Id,
+		"authentication_subflow_"+normalizeResourceName(authenticationSubFlow.RealmId)+"_"+normalizeResourceName(authenticationSubFlow.Id),
+		"keycloak_authentication_subflow",
+		"keycloak",
+		map[string]string{
+			"realm_id":          authenticationSubFlow.RealmId,
+			"parent_flow_alias": authenticationSubFlow.ParentFlowAlias,
+			"alias":             authenticationSubFlow.Alias,
+			"requirement":       authenticationSubFlow.Requirement,
+		},
+		[]string{},
+		map[string]interface{}{},
+	)
+	if previous != nil {
+		resource.AdditionalFields["dependsOn"] = []string{"keycloak_authentication_execution.tfer--" +
+			normalizeResourceName(previous.RealmId) + "_" + normalizeResourceName(previous.Id)}
+	}
+	return resource
+}
+
+func (g RealmGenerator) createAuthenticationExecutionResource(authenticationExecution *keycloak.AuthenticationExecution, previous *keycloak.AuthenticationExecutionInfo) terraformutils.Resource {
+	resource := terraformutils.NewResource(
+		authenticationExecution.Id,
+		"authentication_execution_"+normalizeResourceName(authenticationExecution.RealmId)+"_"+normalizeResourceName(authenticationExecution.Id),
+		"keycloak_authentication_execution",
+		"keycloak",
+		map[string]string{
+			"realm_id":          authenticationExecution.RealmId,
+			"parent_flow_alias": authenticationExecution.ParentFlowAlias,
+			"authenticator":     authenticationExecution.Authenticator,
+		},
+		[]string{},
+		map[string]interface{}{},
+	)
+	if previous != nil {
+		resource.AdditionalFields["dependsOn"] = []string{"keycloak_authentication_execution.tfer--" +
+			normalizeResourceName(previous.RealmId) + "_" + normalizeResourceName(previous.Id)}
+	}
+	return resource
+}
+
+func (g RealmGenerator) createAuthenticationExecutionConfigResource(authenticationExecutionConfig *keycloak.AuthenticationExecutionConfig) terraformutils.Resource {
+	return terraformutils.NewResource(
+		authenticationExecutionConfig.Id,
+		"authentication_execution_config_"+normalizeResourceName(authenticationExecutionConfig.RealmId)+"_"+normalizeResourceName(authenticationExecutionConfig.Id),
+		"keycloak_authentication_execution_config",
+		"keycloak",
+		map[string]string{
+			"realm_id":     authenticationExecutionConfig.RealmId,
+			"execution_id": authenticationExecutionConfig.ExecutionId,
+			"alias":        authenticationExecutionConfig.Alias,
+		},
+		[]string{},
+		map[string]interface{}{
+			"config": authenticationExecutionConfig.Config,
+		},
+	)
+}
+
 func (g RealmGenerator) createCustomUserFederationResources(customUserFederations *[]keycloak.CustomUserFederation) []terraformutils.Resource {
 	var resources []terraformutils.Resource
 	for _, customUserFederation := range *customUserFederations {
