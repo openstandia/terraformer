@@ -72,10 +72,6 @@ func (g *RealmGenerator) InitResources() error {
 
 		// For each authentication flow, get subFlow, execution and execution config resources
 		for _, authenticationFlow := range authenticationFlows {
-			if authenticationFlow.BuiltIn {
-				continue
-			}
-			log.Println("##### FlowAlias: " + authenticationFlow.Alias)
 			authenticationSubFlowOrExecutions, err := kck.ListAuthenticationExecutions(realm.Id, authenticationFlow.Alias)
 			if err != nil {
 				return errors.New("keycloak: could not get authentication execution of authentication flow " + authenticationFlow.Alias + " of realm " + realm.Id + " in Keycloak")
@@ -83,7 +79,9 @@ func (g *RealmGenerator) InitResources() error {
 
 			var previous *keycloak.AuthenticationExecutionInfo
 			for _, authenticationSubFlowOrExecution := range authenticationSubFlowOrExecutions {
-				log.Printf("##### AuthenticationFlow: %v", authenticationSubFlowOrExecution.AuthenticationFlow)
+
+				// Workaround
+				authenticationSubFlowOrExecution.RealmId = realm.Id
 
 				switch authenticationSubFlowOrExecution.AuthenticationFlow {
 				case true:
@@ -92,6 +90,9 @@ func (g *RealmGenerator) InitResources() error {
 						return fmt.Errorf("keycloak: could not get authentication subflow of realm "+realm.Id+" in Keycloak. err: %w", err)
 					}
 
+					authenticationSubFlowOrExecution.ParentFlowAlias = authenticationSubFlow.ParentFlowAlias
+					authenticationSubFlowOrExecution.Alias = authenticationSubFlow.Alias
+
 					g.Resources = append(g.Resources, g.createAuthenticationSubFlowResource(authenticationSubFlow, previous))
 				case false:
 					authenticationExecution, err := kck.GetAuthenticationExecution(realm.Id, authenticationFlow.Alias, authenticationSubFlowOrExecution.Id)
@@ -99,22 +100,20 @@ func (g *RealmGenerator) InitResources() error {
 						return errors.New("keycloak: could not get authentication execution of realm " + realm.Id + " in Keycloak")
 					}
 
+					authenticationSubFlowOrExecution.ParentFlowAlias = authenticationExecution.ParentFlowAlias
+
 					g.Resources = append(g.Resources, g.createAuthenticationExecutionResource(authenticationExecution, previous))
 
-					log.Println("##### config: " + authenticationExecution.AuthenticationConfig)
 					if authenticationSubFlowOrExecution.AuthenticationConfig != "" {
-						log.Println("##### config1: " + authenticationSubFlowOrExecution.AuthenticationConfig)
-						log.Println("##### config2: " + authenticationExecution.AuthenticationConfig)
 						authenticationExecutionConfig := &keycloak.AuthenticationExecutionConfig{
-							RealmId: realm.Id,
-							Id:      authenticationSubFlowOrExecution.AuthenticationConfig,
+							RealmId:     realm.Id,
+							Id:          authenticationSubFlowOrExecution.AuthenticationConfig,
+							ExecutionId: authenticationSubFlowOrExecution.Id,
 						}
 						err := kck.GetAuthenticationExecutionConfig(authenticationExecutionConfig)
 						if err != nil {
 							return errors.New("keycloak: could not get authentication execution config of realm " + realm.Id + " in Keycloak")
 						}
-
-						log.Println("#### Added config")
 
 						g.Resources = append(g.Resources, g.createAuthenticationExecutionConfigResource(authenticationExecutionConfig))
 					}
@@ -304,6 +303,7 @@ func (g *RealmGenerator) PostConvertHook() error {
 	mapScopeNames := map[string]string{}
 	mapUserNames := map[string]string{}
 	mapGroupNames := map[string]string{}
+	mapAuthenticationExecutionIDs := map[string]string{}
 
 	// Set slices to be able to map IDs with Terraform variables
 	for _, r := range g.Resources {
@@ -313,7 +313,8 @@ func (g *RealmGenerator) PostConvertHook() error {
 			r.InstanceInfo.Type != "keycloak_openid_client" &&
 			r.InstanceInfo.Type != "keycloak_role" &&
 			r.InstanceInfo.Type != "keycloak_openid_client_scope" &&
-			r.InstanceInfo.Type != "keycloak_user" {
+			r.InstanceInfo.Type != "keycloak_user" &&
+			r.InstanceInfo.Type != "keycloak_authentication_execution" {
 			continue
 		}
 		if r.InstanceInfo.Type == "keycloak_realm" {
@@ -350,7 +351,12 @@ func (g *RealmGenerator) PostConvertHook() error {
 		if r.InstanceInfo.Type == "keycloak_user" {
 			mapUserNames[r.Item["realm_id"].(string)+"_"+r.Item["username"].(string)] = "${" + r.InstanceInfo.Type + "." + r.ResourceName + ".username}"
 		}
+		if r.InstanceInfo.Type == "keycloak_authentication_execution" {
+			mapAuthenticationExecutionIDs[r.Item["realm_id"].(string)+"_"+r.InstanceState.ID] = "${" + r.InstanceInfo.Type + "." + r.ResourceName + ".id}"
+		}
 	}
+
+	log.Printf("keycloak_authentication_execution: %v", mapAuthenticationExecutionIDs)
 
 	// For each resources, modify import if needed...
 	for i, r := range g.Resources {
@@ -364,6 +370,9 @@ func (g *RealmGenerator) PostConvertHook() error {
 		}
 		if strings.Contains(r.InstanceState.Attributes["description"], "$") {
 			g.Resources[i].Item["description"] = strings.ReplaceAll(r.InstanceState.Attributes["description"], "$", "$$")
+		}
+		if strings.Contains(r.InstanceState.Attributes["root_url"], "$") {
+			g.Resources[i].Item["root_url"] = strings.ReplaceAll(r.InstanceState.Attributes["root_url"], "$", "$$")
 		}
 
 		// Sort supported_locales to get reproducible results for keycloak_realm resources
@@ -529,6 +538,11 @@ func (g *RealmGenerator) PostConvertHook() error {
 		// Map included_client_audience to keycloak_openid_client.foo.client_id Terraform variables for open id audience mapper resources
 		if _, exist := r.Item["included_client_audience"]; exist && r.InstanceInfo.Type == "keycloak_openid_audience_protocol_mapper" {
 			g.Resources[i].Item["included_client_audience"] = mapClientClientIDs[r.Item["realm_id"].(string)+"_"+r.Item["included_client_audience"].(string)]
+		}
+
+		// Map execution_id attributes to keycloak_authentication_execution_config.foo.execution_id Terraform variables for authentication execution config resources
+		if r.InstanceInfo.Type == "keycloak_authentication_execution_config" {
+			g.Resources[i].Item["execution_id"] = mapAuthenticationExecutionIDs[r.Item["realm_id"].(string)+"_"+r.Item["execution_id"].(string)]
 		}
 
 		// Map realm_id attributes to keycloak_realm.foo.id Terraform variables for all the resources (almost all resources have this attribute)
