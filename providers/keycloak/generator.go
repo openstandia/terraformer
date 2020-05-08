@@ -60,14 +60,14 @@ func (g *RealmGenerator) InitResources() error {
 		// Get required actions resources
 		requiredActions, err := kck.GetRequiredActions(realm.Id)
 		if err != nil {
-			return errors.New("keycloak: could not get required actions of realm " + realm.Id + " in Keycloak")
+			return fmt.Errorf("keycloak: could not get required actions of realm %s in Keycloak. err: %w", realm.Id, err)
 		}
 		g.Resources = append(g.Resources, g.createRequiredActionResources(requiredActions)...)
 
-		// Get authentication flows resources
+		// Get top-level authentication flows resources
 		authenticationFlows, err := kck.ListAuthenticationFlows(realm.Id)
 		if err != nil {
-			return errors.New("keycloak: could not get authentication flows of realm " + realm.Id + " in Keycloak")
+			return fmt.Errorf("keycloak: could not get authentication flows of realm %s in Keycloak. err: %w", realm.Id, err)
 		}
 		g.Resources = append(g.Resources, g.createAuthenticationFlowResources(authenticationFlows)...)
 
@@ -75,7 +75,8 @@ func (g *RealmGenerator) InitResources() error {
 		for _, rootAutheticationFlow := range authenticationFlows {
 			authenticationSubFlowOrExecutions, err := kck.ListAuthenticationExecutions(realm.Id, rootAutheticationFlow.Alias)
 			if err != nil {
-				return errors.New("keycloak: could not get authentication execution of authentication flow " + rootAutheticationFlow.Alias + " of realm " + realm.Id + " in Keycloak")
+				return fmt.Errorf("keycloak: could not get authentication execution of authentication flow %s of realm %s in Keycloak. err: %w",
+					rootAutheticationFlow.Alias, realm.Id, err)
 			}
 
 			var previousResource *terraformutils.Resource
@@ -108,7 +109,8 @@ func (g *RealmGenerator) InitResources() error {
 				case true:
 					authenticationSubFlow, err := kck.GetAuthenticationSubFlow(realm.Id, parentFlowAlias, authenticationSubFlowOrExecution.FlowId)
 					if err != nil {
-						return fmt.Errorf("keycloak: could not get authentication subflow of realm "+realm.Id+" in Keycloak. err: %w", err)
+						return fmt.Errorf("keycloak: could not get authentication subflow %s of realm %s in Keycloak. err: %w",
+							authenticationSubFlowOrExecution.FlowId, realm.Id, err)
 					}
 
 					resource = g.createAuthenticationSubFlowResource(authenticationSubFlow)
@@ -123,7 +125,8 @@ func (g *RealmGenerator) InitResources() error {
 				case false:
 					authenticationExecution, err := kck.GetAuthenticationExecution(realm.Id, parentFlowAlias, authenticationSubFlowOrExecution.Id)
 					if err != nil {
-						return errors.New("keycloak: could not get authentication execution of realm " + realm.Id + " in Keycloak")
+						return fmt.Errorf("keycloak: could not get authentication execution %s of realm %s in Keycloak. err: %w",
+							authenticationSubFlowOrExecution.Id, realm.Id, err)
 					}
 
 					resource = g.createAuthenticationExecutionResource(authenticationExecution)
@@ -137,7 +140,8 @@ func (g *RealmGenerator) InitResources() error {
 						}
 						err := kck.GetAuthenticationExecutionConfig(authenticationExecutionConfig)
 						if err != nil {
-							return errors.New("keycloak: could not get authentication execution config of realm " + realm.Id + " in Keycloak")
+							return fmt.Errorf("keycloak: could not get authentication execution config %s of realm %s in Keycloak. err: %w",
+								authenticationExecutionConfig.Id, realm.Id, err)
 						}
 
 						g.Resources = append(g.Resources, g.createAuthenticationExecutionConfigResource(authenticationExecutionConfig))
