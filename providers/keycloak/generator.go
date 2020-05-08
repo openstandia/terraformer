@@ -17,7 +17,6 @@ package keycloak
 import (
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 
@@ -359,6 +358,7 @@ func (g *RealmGenerator) PostConvertHook() error {
 	mapScopeNames := map[string]string{}
 	mapUserNames := map[string]string{}
 	mapGroupNames := map[string]string{}
+	mapAuthenticationFlowAliases := map[string]string{}
 	mapAuthenticationExecutionIDs := map[string]string{}
 
 	// Set slices to be able to map IDs with Terraform variables
@@ -370,6 +370,8 @@ func (g *RealmGenerator) PostConvertHook() error {
 			r.InstanceInfo.Type != "keycloak_role" &&
 			r.InstanceInfo.Type != "keycloak_openid_client_scope" &&
 			r.InstanceInfo.Type != "keycloak_user" &&
+			r.InstanceInfo.Type != "keycloak_authentication_flow" &&
+			r.InstanceInfo.Type != "keycloak_authentication_subflow" &&
 			r.InstanceInfo.Type != "keycloak_authentication_execution" {
 			continue
 		}
@@ -407,12 +409,13 @@ func (g *RealmGenerator) PostConvertHook() error {
 		if r.InstanceInfo.Type == "keycloak_user" {
 			mapUserNames[r.Item["realm_id"].(string)+"_"+r.Item["username"].(string)] = "${" + r.InstanceInfo.Type + "." + r.ResourceName + ".username}"
 		}
+		if r.InstanceInfo.Type == "keycloak_authentication_flow" || r.InstanceInfo.Type == "keycloak_authentication_subflow" {
+			mapAuthenticationFlowAliases[r.Item["realm_id"].(string)+"_"+r.Item["alias"].(string)] = "${" + r.InstanceInfo.Type + "." + r.ResourceName + ".alias}"
+		}
 		if r.InstanceInfo.Type == "keycloak_authentication_execution" {
 			mapAuthenticationExecutionIDs[r.Item["realm_id"].(string)+"_"+r.InstanceState.ID] = "${" + r.InstanceInfo.Type + "." + r.ResourceName + ".id}"
 		}
 	}
-
-	log.Printf("keycloak_authentication_execution: %v", mapAuthenticationExecutionIDs)
 
 	// For each resources, modify import if needed...
 	for i, r := range g.Resources {
@@ -594,6 +597,11 @@ func (g *RealmGenerator) PostConvertHook() error {
 		// Map included_client_audience to keycloak_openid_client.foo.client_id Terraform variables for open id audience mapper resources
 		if _, exist := r.Item["included_client_audience"]; exist && r.InstanceInfo.Type == "keycloak_openid_audience_protocol_mapper" {
 			g.Resources[i].Item["included_client_audience"] = mapClientClientIDs[r.Item["realm_id"].(string)+"_"+r.Item["included_client_audience"].(string)]
+		}
+
+		// Map parent_flow_alias attributes to keycloak_authentication_(sub)flow.foo.alias Terraform variables for authentication subflow ad execution resources
+		if r.InstanceInfo.Type == "keycloak_authentication_subflow" || r.InstanceInfo.Type == "keycloak_authentication_execution" {
+			g.Resources[i].Item["parent_flow_alias"] = mapAuthenticationFlowAliases[r.Item["realm_id"].(string)+"_"+r.Item["parent_flow_alias"].(string)]
 		}
 
 		// Map execution_id attributes to keycloak_authentication_execution_config.foo.execution_id Terraform variables for authentication execution config resources
