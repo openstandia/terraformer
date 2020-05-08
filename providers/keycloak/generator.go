@@ -72,34 +72,37 @@ func (g *RealmGenerator) InitResources() error {
 		g.Resources = append(g.Resources, g.createAuthenticationFlowResources(authenticationFlows)...)
 
 		// For each authentication flow, get subFlow, execution and execution config resources
-		for _, rootAutheticationFlow := range authenticationFlows {
-			authenticationSubFlowOrExecutions, err := kck.ListAuthenticationExecutions(realm.Id, rootAutheticationFlow.Alias)
+		for _, topLevelAuthenticationFlow := range authenticationFlows {
+			authenticationSubFlowOrExecutions, err := kck.ListAuthenticationExecutions(realm.Id, topLevelAuthenticationFlow.Alias)
 			if err != nil {
-				return fmt.Errorf("keycloak: could not get authentication execution of authentication flow %s of realm %s in Keycloak. err: %w",
-					rootAutheticationFlow.Alias, realm.Id, err)
+				return fmt.Errorf("keycloak: could not get authentication executions of authentication flow %s of realm %s in Keycloak. err: %w",
+					topLevelAuthenticationFlow.Alias, realm.Id, err)
 			}
 
-			var previousResource *terraformutils.Resource
-			var subFlowStack []*keycloak.AuthenticationExecutionInfo
-			parentFlowAlias := rootAutheticationFlow.Alias
+			var stack []*keycloak.AuthenticationExecutionInfo
+			parentFlowAlias := topLevelAuthenticationFlow.Alias
 
 			for _, authenticationSubFlowOrExecution := range authenticationSubFlowOrExecutions {
 
 				// Find the parent flow alias
-				if len(subFlowStack) > 0 {
-					lastSubFlow := subFlowStack[len(subFlowStack)-1]
-					if authenticationSubFlowOrExecution.Level < lastSubFlow.Level {
-						// Find the last sub flow for the current level
-						subFlowStack = subFlowStack[:authenticationSubFlowOrExecution.Level+1]
-						lastSubFlow = subFlowStack[len(subFlowStack)-1]
+				if len(stack) > 0 {
+					previous := stack[len(stack)-1]
+					if authenticationSubFlowOrExecution.Level < previous.Level {
+						// Find the last sub flow/execution for the current level
+						stack = stack[:authenticationSubFlowOrExecution.Level+1]
+						previous = stack[len(stack)-1]
 					}
-					if authenticationSubFlowOrExecution.Level == lastSubFlow.Level {
-						// Same level sub flow, it means that the sub flow has same parent flow of the last sub flow
-						parentFlowAlias = lastSubFlow.ParentFlowAlias
+					if authenticationSubFlowOrExecution.Level == previous.Level {
+						// Same level sub flow/execution, it means that the sub flow/execution has same parent flow of the last sub flow/execution
+						parentFlowAlias = previous.ParentFlowAlias
 
-					} else if authenticationSubFlowOrExecution.Level > lastSubFlow.Level {
-						// Deep level sub flow, it means that the parent flow is the last sub flow
-						parentFlowAlias = lastSubFlow.Alias
+					} else if authenticationSubFlowOrExecution.Level > previous.Level {
+						// Deep level sub flow/execution, it means that the parent flow is the last sub flow/execution
+						if previous.AuthenticationFlow {
+							parentFlowAlias = previous.Alias
+						} else {
+							return errors.New("keycloak: invalid parent sub flow, it should be a sub flow but it's an execution")
+						}
 					}
 				}
 
@@ -113,14 +116,12 @@ func (g *RealmGenerator) InitResources() error {
 							authenticationSubFlowOrExecution.FlowId, realm.Id, err)
 					}
 
-					resource = g.createAuthenticationSubFlowResource(authenticationSubFlow)
-					g.Resources = append(g.Resources, resource)
-
-					// Stack the current sub flow
 					// Need to store the alias and parent flow alias
 					authenticationSubFlowOrExecution.Alias = authenticationSubFlow.Alias
 					authenticationSubFlowOrExecution.ParentFlowAlias = parentFlowAlias
-					subFlowStack = append(subFlowStack, authenticationSubFlowOrExecution)
+
+					resource = g.createAuthenticationSubFlowResource(authenticationSubFlow)
+					g.Resources = append(g.Resources, resource)
 
 				case false:
 					authenticationExecution, err := kck.GetAuthenticationExecution(realm.Id, parentFlowAlias, authenticationSubFlowOrExecution.Id)
@@ -128,6 +129,9 @@ func (g *RealmGenerator) InitResources() error {
 						return fmt.Errorf("keycloak: could not get authentication execution %s of realm %s in Keycloak. err: %w",
 							authenticationSubFlowOrExecution.Id, realm.Id, err)
 					}
+
+					// Need to store the parent flow alias
+					authenticationSubFlowOrExecution.ParentFlowAlias = parentFlowAlias
 
 					resource = g.createAuthenticationExecutionResource(authenticationExecution)
 					g.Resources = append(g.Resources, resource)
@@ -148,10 +152,29 @@ func (g *RealmGenerator) InitResources() error {
 					}
 				}
 
-				if previousResource != nil {
-					resource.AdditionalFields["depends_on"] = []string{previousResource.InstanceInfo.Type + "." + previousResource.ResourceName}
+				if len(stack) > 0 && authenticationSubFlowOrExecution.Index > 0 {
+					previous := stack[len(stack)-1]
+					var resouceType string
+					var resouceName string
+					if previous.AuthenticationFlow {
+						resouceType = "keycloak_authentication_subflow"
+						resouceName = "authentication_subflow_" +
+							normalizeResourceName(realm.Id) + "_" + normalizeResourceName(previous.FlowId)
+					} else {
+						resouceType = "keycloak_authentication_execution"
+						resouceName = "authentication_execution_" +
+							normalizeResourceName(realm.Id) + "_" + normalizeResourceName(previous.Id)
+					}
+					resource.AdditionalFields["depends_on"] = []string{resouceType + "." + terraformutils.TfSanitize(resouceName)}
 				}
-				previousResource = &resource
+
+				// Stack the current sub flow/execution
+				if len(stack) > 0 && stack[len(stack)-1].Level == authenticationSubFlowOrExecution.Level {
+					// Replace it if it's same level
+					stack[len(stack)-1] = authenticationSubFlowOrExecution
+				} else {
+					stack = append(stack, authenticationSubFlowOrExecution)
+				}
 			}
 		}
 
