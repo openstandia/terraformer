@@ -15,8 +15,6 @@
 package keycloak
 
 import (
-	"log"
-
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 	"github.com/mrparkers/terraform-provider-keycloak/keycloak"
 )
@@ -76,7 +74,6 @@ func (g RealmGenerator) createAuthenticationExecutionResource(authenticationExec
 }
 
 func (g RealmGenerator) createAuthenticationExecutionConfigResource(authenticationExecutionConfig *keycloak.AuthenticationExecutionConfig) terraformutils.Resource {
-	log.Printf("#### createAuthenticationExecutionConfigResource: authenticationExecutionConfig: %s, %s, %s", authenticationExecutionConfig.Id, authenticationExecutionConfig.ExecutionId, authenticationExecutionConfig.Alias)
 	return terraformutils.NewResource(
 		authenticationExecutionConfig.Id,
 		"authentication_execution_config_"+normalizeResourceName(authenticationExecutionConfig.RealmId)+"_"+normalizeResourceName(authenticationExecutionConfig.Id),
